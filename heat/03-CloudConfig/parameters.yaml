@@ -1,0 +1,4 @@
+parameters:
+    keypair: ewilliams-1
+    cidr: 172.16.5.0/24
+    image: Ubuntu-18.04-LTS

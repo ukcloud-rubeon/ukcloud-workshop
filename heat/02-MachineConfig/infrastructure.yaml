@@ -1,0 +1,151 @@
+# https://docs.openstack.org/heat/rocky/template_guide/hot_spec.html
+# this could be "newton" as well
+heat_template_version: 2016-10-14
+
+description: >
+    Heat template to create a single machine with ephemeral storage, a network
+    with outgoing internet access, and a floating IP.
+parameters:
+    image:
+        type: string
+        description: >
+            Name of the image to create the instance
+    flavor:
+        type: string
+        description: >
+            Name of the flavor of the instance.  Default: t1.tiny
+        default: t1.tiny
+    keypair:
+        type: string
+        description: >
+            Name of the keypair for this instance
+    cidr:
+        type: string
+        description: >
+            CIDR of the subnet that will be used for the instance, e.g.
+            192.168.1.0/24
+    external_gw:
+        type: string
+        description: >
+            Name of external network that will be used for public access.
+            Default: "internet"
+        default: internet
+    dns_nameservers:
+        type: comma_delimited_list
+        description:
+            Comma-separated list of name servers for our instances
+        default: 8.8.8.8,8.8.4.4
+
+resources:
+    # router
+    # https://docs.openstack.org/heat/newton/template_guide/openstack.html#OS::Neutron::Router
+    router:
+        type: OS::Neutron::Router
+        properties:
+            external_gateway_info:
+                network:
+                    get_param: external_gw
+    # network
+    network:
+        type: OS::Neutron::Net
+        properties:
+            name: demo-net
+    # subnet
+    subnet:
+        type: OS::Neutron::Subnet
+        properties:
+            cidr:
+                get_param: cidr
+            dns_nameservers:
+                get_param: dns_nameservers
+            network:
+                get_resource: network
+
+    # router interface
+    router_interface:
+        type: OS::Neutron::RouterInterface
+        properties:
+            router:
+                get_resource: router
+            subnet:
+                get_resource: subnet
+    # security groups
+    secgroup:
+        type: OS::Neutron::SecurityGroup
+        properties:
+            name: Jumpbox Security Group
+            description: Common rules for our instance
+            rules:
+                - protocol: tcp
+                  remote_ip_prefix: 0.0.0.0/0
+                  port_range_min: 22
+                  port_range_max: 22
+                  direction: ingress
+                - protocol: tcp
+                  remote_ip_prefix: 0.0.0.0/0
+                  port_range_min: 80
+                  port_range_max: 80
+                  direction: ingress
+                - protocol: tcp
+                  remote_ip_prefix: 0.0.0.0/0
+                  port_range_min: 443
+                  port_range_max: 443
+                  direction: ingress
+                - protocol: tcp
+                  remote_ip_prefix: 0.0.0.0/0
+                  port_range_min: 53
+                  port_range_max: 53
+                  direction: egress
+                - protocol: udp
+                  remote_ip_prefix: 0.0.0.0/0
+                  port_range_min: 53
+                  port_range_max: 53
+                  direction: egress
+
+    # Neutron Port
+    port:
+        type: OS::Neutron::Port
+        properties:
+            network:
+                get_resource: network
+            fixed_ips:
+                - subnet_id:
+                    get_resource: subnet
+            security_groups:
+                -
+                    get_resource: secgroup
+                - default
+
+    # floating IP
+    floating_ip:
+        type: OS::Neutron::FloatingIP
+        properties:
+            floating_network:
+                get_param: external_gw
+            port_id:
+                get_resource: port
+    # instance
+    instance:
+        type: OS::Nova::Server
+        properties:
+            flavor:
+                get_param: flavor
+            image:
+                get_param: image
+            key_name:
+                get_param: keypair
+            networks:
+                - port:
+                    get_resource: port
+            user_data: |
+                #!/bin/bash
+                sudo apt update
+                # sudo DEBIAN_FRONTEND=noninteractive \
+                #     apt-get upgrade -y
+                sudo DEBIAN_FRONTEND=noninteractive \
+                    apt-get install -y joe  apache2 screen
+                sudo cp /tmp/index.html /var/www/html/index.html
+            config_drive: true # required for personality
+            personality:
+                /tmp/index.html:
+                    get_file: index.html

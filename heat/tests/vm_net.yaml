@@ -1,0 +1,142 @@
+heat_template_version: 2016-10-14
+
+description: Simple template to deploy two networks one to HSCN and other to Internet via the proxy
+
+parameters:
+  proxyserver_image:
+    type: string
+    label: Image name or ID
+    description: Image to be used for the server.
+    default: igrow_proxy_gold1
+  proxyserver_flavor:
+    type: string
+    label: Flavor
+    description: Type of instance (flavor) to be used on the compute instance.
+    default: t1.large
+  key_name:
+    type: string
+    label: Key name
+    description: Name of key-pair to be installed on the compute instance.
+    default: igrow-keypair
+  private_network_name:
+    type: string
+    label: Private network name or ID
+    description: Private network to attach server to.
+    default: PrivateNetwork
+  private_subnet1_name:
+    type: string
+    description: Name of private sub network into which servers get deployed
+    default: PrivateSubnet1
+  private_subnet2_name:
+    type: string
+    description: Name of private sub network into which servers get deployed
+    default: PrivateSubnet2
+  private_subnet1_cidr:
+      type: string
+      default: 192.168.1.0/24
+  private_subnet2_cidr:
+      type: string
+      default: 192.168.2.0/24
+  public_network:
+    type: string
+    label: Private network name or ID
+    description: Public network to attach server to.
+    default: PublicNetwork
+  public_subnet1:
+    type: string
+    description: Name of private sub network into which servers get deployed
+    default: PublicSubnet1
+  proxy_private_ip_1:
+    type: string
+    default: 192.168.2.5
+  proxy_public_ip_1:
+    type: string
+    default: 192.168.1.5
+  internet_gateway:
+    type: string
+    label: Internet network name or ID
+    description: Internet network.
+    default: internet
+
+resources:
+
+  private_network:
+      type: OS::Neutron::Net
+      properties:
+        name:
+          get_param: private_network_name
+
+  private_subnet1:
+      type: OS::Neutron::Subnet
+      properties:
+          network:
+              get_resource: private_network
+          cidr:
+              get_param: private_subnet1_cidr
+
+  private_subnet2:
+      type: OS::Neutron::Subnet
+      properties:
+          network:
+              get_resource: private_network
+          cidr:
+              get_param: private_subnet2_cidr
+
+  proxyserver_port1:
+    type: OS::Neutron::Port
+    properties:
+      network: { get_resource: private_network }
+      fixed_ips:
+          - ip_address: { get_param: proxy_private_ip_1 }
+
+  proxyserver_port2:
+    type: OS::Neutron::Port
+    properties:
+      network: { get_resource: private_network }
+      fixed_ips:
+          - ip_address:
+              get_param: proxy_public_ip_1
+
+  floating_ip:
+    type: OS::Neutron::FloatingIP
+    properties:
+      floating_network_id: { get_param: internet_gateway }
+      port_id: { get_resource: proxyserver_port2 }
+
+  router:
+      type: OS::Neutron::Router
+      properties:
+          name: router
+          external_gateway_info:
+              network:
+                get_param: internet_gateway
+
+
+  router_private_subnet1:
+      type: OS::Neutron::RouterInterface
+      properties:
+          router_id:
+              get_resource: router
+          subnet_id:
+              get_resource: private_subnet1
+
+  router_private_subnet2:
+      type: OS::Neutron::RouterInterface
+      properties:
+          router_id:
+              get_resource: router
+          subnet_id:
+              get_resource: private_subnet2
+
+  proxyserver:
+    type: OS::Nova::Server
+    depends_on:
+        - proxyserver_port1
+        - proxyserver_port2
+    properties:
+      key_name: { get_param: key_name }
+      image: { get_param: proxyserver_image }
+      flavor: { get_param: proxyserver_flavor }
+      networks:
+        - port: { get_resource: proxyserver_port2 }
+        - port: { get_resource: proxyserver_port1 }
